@@ -1,0 +1,24 @@
+.{
+    .name = "snail",
+    .version = "0.0.0",
+
+    .minimum_zig_version = "0.13.0",
+
+    .dependencies = .{
+        .vaxis = .{
+            .url = "git+https://github.com/rockorager/libvaxis?ref=v0.4.1#a1b43d24653670d612b91f0855b165e6c987b809",
+            .hash = "1220e4d6fc82c487178339422887fdfd5094b15c242fe31ad596c4b2fcdc60ef667f",
+        },
+        .libxev = .{
+            .url = "git+https://github.com/mitchellh/libxev#f6a672a78436d8efee1aa847a43a900ad773618b",
+            .hash = "12207b7a5b538ffb7fb18f954ae17d2f8490b6e3778a9e30564ad82c58ee8da52361",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE",
+        "README.md",
+    },
+}
