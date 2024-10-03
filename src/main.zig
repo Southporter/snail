@@ -56,3 +56,7 @@ pub fn main() !void {
     // Run the application
     try app.run();
 }
+
+test "Snail tests" {
+    _ = @import("Parser.zig");
+}
