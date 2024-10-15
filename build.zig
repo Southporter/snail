@@ -12,6 +12,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const zg = b.dependency("zg", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const exe = b.addExecutable(.{
         .name = "snail",
@@ -21,6 +25,8 @@ pub fn build(b: *std.Build) void {
     });
     exe.root_module.addImport("vaxis", libvaxis.module("vaxis"));
     exe.root_module.addImport("xev", libxev.module("xev"));
+    exe.root_module.addImport("grapheme", zg.module("grapheme"));
+    exe.root_module.addImport("DisplayWidth", zg.module("DisplayWidth"));
 
     b.installArtifact(exe);
 
