@@ -1,5 +1,6 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
+const xev = @import("xev");
 const App = @import("App.zig");
 
 pub const panix = vaxis.panix_handler;
@@ -49,12 +50,39 @@ pub fn main() !void {
         .truncate = true,
     });
 
+    var tty = try vaxis.Tty.init();
+    defer tty.deinit();
+
+    var vx = try vaxis.init(allocator, .{
+        .kitty_keyboard_flags = .{ .report_events = true },
+    });
+    defer vx.deinit(allocator, tty.anyWriter());
+
+    var pool = xev.ThreadPool.init(.{});
+    var loop = try xev.Loop.init(.{
+        .thread_pool = &pool,
+    });
+    defer loop.deinit();
+
     // Initialize our application
-    var app = try App.init(allocator);
+    var app = try App.init(allocator, &vx, tty.bufferedWriter(), &loop);
     defer app.deinit();
 
-    // Run the application
-    try app.run();
+    var vx_loop: vaxis.xev.TtyWatcher(App) = undefined;
+    try vx_loop.init(&tty, &vx, &loop, &app, App.update);
+
+    try vx.enterAltScreen(tty.anyWriter());
+    errdefer vx.exitAltScreen(tty.anyWriter()) catch @panic("Failed to exit alt screen");
+    // send queries asynchronously
+    try vx.queryTerminalSend(tty.anyWriter());
+    // Enable mouse events
+    // try vx.setMouseMode(tty.anyWriter(), true);
+
+    const timer = try xev.Timer.init();
+    var timer_cmp: xev.Completion = .{};
+    timer.run(&loop, &timer_cmp, App.next_ms, App, &app, App.tick);
+
+    try loop.run(.until_done);
 }
 
 test "Snail tests" {
