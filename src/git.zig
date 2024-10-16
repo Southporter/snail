@@ -18,13 +18,13 @@ fn getRef(allocator: std.mem.Allocator, dir: std.fs.Dir) ![]const u8 {
     var buf: [128]u8 = undefined;
     const size = try head.readAll(&buf);
 
-    if (std.mem.eql(u8, "ref: ", buf[0..4])) {
+    if (std.ascii.startsWithIgnoreCase(&buf, "ref: ")) {
         // Strip off the beginning
         // i.e.
         //
         // ref: refs/heads/master
         const leader = "ref: refs/heads/";
-        return buf[leader.len .. size - 1];
+        return allocator.dupe(u8, buf[leader.len .. size - 1]);
     }
 
     return allocator.dupe(u8, buf[0 .. size - 1]);

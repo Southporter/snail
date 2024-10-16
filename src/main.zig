@@ -21,7 +21,7 @@ pub fn fileLogger(
     args: anytype,
 ) void {
     const scope_prefix = "(" ++ switch (scope) {
-        .app, std.log.default_log_scope => @tagName(scope),
+        .app, .process, std.log.default_log_scope => @tagName(scope),
         else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
             @tagName(scope)
         else

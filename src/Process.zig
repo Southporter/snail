@@ -12,22 +12,24 @@ pub const State = enum {
 };
 
 state: State = .initialized,
-out: std.ArrayListUnmanaged(u8) = .{},
 out_buf: [256]u8 = undefined,
 out_offset: usize = 0,
-err: std.ArrayListUnmanaged(u8) = .{},
 err_buf: [256]u8 = undefined,
 err_offset: usize = 0,
 child: std.process.Child,
-stdout: vaxis.widgets.TextView.Buffer,
+stdout: vaxis.widgets.TextView.Buffer = .{},
+stderr: vaxis.widgets.TextView.Buffer = .{},
 scroll: vaxis.widgets.ScrollView.Scroll = .{},
+gd: grapheme.GraphemeData = undefined,
+wd: WidthData = undefined,
 
 pub fn create(allocator: std.mem.Allocator, args: []const []const u8) !*Process {
     var p = try allocator.create(Process);
     p.* = .{
         .child = std.process.Child.init(args, allocator),
         .state = .initialized,
-        .stdout = .{},
+        .gd = try grapheme.GraphemeData.init(allocator),
+        .wd = try WidthData.init(allocator),
     };
     p.child.expand_arg0 = .expand;
     p.child.stdin_behavior = .Pipe;
@@ -36,13 +38,12 @@ pub fn create(allocator: std.mem.Allocator, args: []const []const u8) !*Process 
     return p;
 }
 
-pub fn init(self: *Process, allocator: std.mem.Allocator, args: []const []const u8) void {
-    self.child = std.process.Child.init(args, allocator);
-    self.child.expand_arg0 = .expand;
-    self.child.stdin_behavior = .Pipe;
-    self.child.stdout_behavior = .Pipe;
-    self.child.stderr_behavior = .Pipe;
-    self.state = .initialized;
+pub fn destroy(self: *Process, allocator: std.mem.Allocator) void {
+    self.stderr.deinit(allocator);
+    self.stdout.deinit(allocator);
+    self.gd.deinit();
+    self.wd.deinit();
+    allocator.destroy(self);
 }
 
 pub fn finish(self: *Process) void {
@@ -50,33 +51,58 @@ pub fn finish(self: *Process) void {
     return;
 }
 
-pub fn run(self: *Process) !void {
-    try self.child.spawn();
+pub fn run(self: *Process, allocator: std.mem.Allocator) !void {
+    log.debug("Spawning process", .{});
+    self.child.spawn() catch |err| {
+        log.err("Error running process: {any}", .{err});
+        var buf: [256]u8 = undefined;
+        const msg = std.fmt.bufPrint(&buf, "Error: {any}", .{err}) catch "Error: Unknown";
+        return self.writeErr(allocator, msg);
+    };
+    log.debug("Process is now Running", .{});
     self.state = .running;
 }
 
-pub fn collectOutput(self: *Process, allocator: std.mem.Allocator) !void {
-    const gd = try grapheme.GraphemeData.init(allocator);
-    defer gd.deinit();
-    const wd = try WidthData.init(allocator);
+fn writeErr(self: *Process, allocator: std.mem.Allocator, err: []const u8) !void {
+    return self.stderr.append(allocator, .{
+        .bytes = err,
+        .gd = &self.gd,
+        .wd = &self.wd,
+    });
+}
+
+pub fn collectOutput(self: *Process, allocator: std.mem.Allocator) !bool {
+    var got_output = false;
     if (self.child.stdout) |out| {
         const read = try out.read(&self.out_buf);
-        try self.out.appendSlice(allocator, self.out_buf[0..read]);
-        try self.stdout.append(allocator, .{
-            .bytes = self.out_buf[0..read],
-            .gd = &gd,
-            .wd = &wd,
-        });
+        if (read > 0) {
+            got_output = true;
+            log.debug("Got stdout: {s}", .{self.out_buf[0..read]});
+            try self.stdout.append(allocator, .{
+                .bytes = self.out_buf[0..read],
+                .gd = &self.gd,
+                .wd = &self.wd,
+            });
+        }
     }
     if (self.child.stderr) |err| {
         const read = try err.read(&self.err_buf);
-        try self.err.appendSlice(allocator, self.err_buf[0..read]);
+        if (read > 0) {
+            log.debug("Got stderr: {s}", .{self.err_buf[0..read]});
+            try self.stderr.append(allocator, .{
+                .bytes = self.err_buf[0..read],
+                .gd = &self.gd,
+                .wd = &self.wd,
+            });
+            got_output = true;
+        }
     }
+    return got_output;
 }
 
-pub fn updateStatus(self: *Process) !void {
+pub fn updateStatus(self: *Process) !bool {
     if (self.state != .running) {
-        return;
+        return false;
     }
 
     const res = std.posix.waitpid(self.child.id, std.c.W.NOHANG);
@@ -85,8 +111,9 @@ pub fn updateStatus(self: *Process) !void {
     if (std.c.W.IFEXITED(res.status)) {
         self.state = .finished;
         log.debug("Child finised with {d}", .{std.c.W.EXITSTATUS(res.status)});
-        return;
+        return true;
     }
+    return false;
 }
 
 pub fn updateInput(self: *Process, key: vaxis.Key) void {
@@ -124,14 +151,20 @@ pub fn draw(self: *Process, win: vaxis.Window) void {
         },
     };
     out_view.draw(out_win, self.stdout);
-    // const err_win = win.child(.{
-    //     .x_off = .{ .limit = half },
-    // });
+    const err_win = win.child(.{
+        .x_off = half,
+    });
+    var err_view = vaxis.widgets.TextView{
+        .scroll_view = .{
+            .scroll = self.scroll,
+        },
+    };
+    err_view.draw(err_win, self.stderr);
 }
 
 pub fn updateScroll(self: *Process, direction: enum { up, down }) void {
     switch (direction) {
-        .up => self.scroll.y = 1,
-        .down => self.scroll.y += 1,
+        .up => self.scroll.y = 5,
+        .down => self.scroll.y += 5,
     }
 }
