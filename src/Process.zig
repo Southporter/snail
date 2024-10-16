@@ -22,6 +22,7 @@ stderr: vaxis.widgets.TextView.Buffer = .{},
 scroll: vaxis.widgets.ScrollView.Scroll = .{},
 gd: grapheme.GraphemeData = undefined,
 wd: WidthData = undefined,
+selected_view: enum { stdout, stderr } = .stdout,
 
 pub fn create(allocator: std.mem.Allocator, args: []const []const u8) !*Process {
     var p = try allocator.create(Process);
@@ -117,7 +118,9 @@ pub fn updateStatus(self: *Process) !bool {
 }
 
 pub fn updateInput(self: *Process, key: vaxis.Key) void {
-    if (key.matches(vaxis.Key.right, .{})) {
+    if (key.matches(vaxis.Key.tab, .{})) {
+        self.selected_view = if (self.selected_view == .stdout)  .stderr else .stdout;
+    } else if (key.matches(vaxis.Key.right, .{})) {
         self.scroll.x +|= 1;
     } else if (key.matches(vaxis.Key.right, .{ .shift = true })) {
         self.scroll.x +|= 32;
@@ -141,25 +144,31 @@ pub fn updateInput(self: *Process, key: vaxis.Key) void {
 }
 
 pub fn draw(self: *Process, win: vaxis.Window) void {
-    const half = win.width / 2;
-    const out_win = win.child(.{
-        .width = .{ .limit = half },
+    var tabs =  win.child(.{
+        .height = .{ .limit = 3 },
+        .width = .{ .limit = 19 },
+        .border = .{ .where = .all,
+            .glyphs = .{ .custom = .{ "╭", "─", "╮", "│","┘", "└" },}
+    },
     });
-    var out_view = vaxis.widgets.TextView{
+    const selected_style = vaxis.Cell.Style{ .bg = .{ .rgb = .{0xD3, 0xD3, 0xD3 }}, .fg = .{ .index = 0 } };
+    const unselected_style = vaxis.Cell.Style{ };
+    _ = try tabs.print(&.{
+        .{ .text = " stdout ", .style = if (self.selected_view == .stdout) selected_style else unselected_style },
+        .{ .text = "|", .style = .{}},
+        .{ .text = " stderr ", .style = if (self.selected_view == .stderr) selected_style else unselected_style },
+    }, .{});
+
+    const text_win = win.child(.{
+        .y_off = 2,
+        .border = .{ .where = .top },
+    });
+    var text_view = vaxis.widgets.TextView{
         .scroll_view = .{
             .scroll = self.scroll,
         },
     };
-    out_view.draw(out_win, self.stdout);
-    const err_win = win.child(.{
-        .x_off = half,
-    });
-    var err_view = vaxis.widgets.TextView{
-        .scroll_view = .{
-            .scroll = self.scroll,
-        },
-    };
-    err_view.draw(err_win, self.stderr);
+    text_view.draw(text_win, if (self.selected_view == .stdout) self.stdout else self.stderr);
 }
 
 pub fn updateScroll(self: *Process, direction: enum { up, down }) void {

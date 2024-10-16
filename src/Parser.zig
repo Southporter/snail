@@ -21,6 +21,7 @@ pub const Token = struct {
         flag,
         string,
         invalid,
+        command,
         end_of_input,
     };
 
@@ -35,6 +36,7 @@ const State = enum {
     path,
     identifier,
     flag,
+    command,
     quoted,
 };
 
@@ -69,6 +71,10 @@ pub fn next(self: *Parser) Token {
                     state = .flag;
                     result.kind = .flag;
                 },
+                ':' => {
+                    state = .command;
+                    result.kind = .command;
+            },
                 ' ', '\t', '\r' => {
                     result.location.start += 1;
                 },
@@ -102,6 +108,16 @@ pub fn next(self: *Parser) Token {
                 },
                 ' ', '\t' => {
                     break;
+                },
+                else => {},
+            },
+            .command => switch (c) {
+                ' ', '\t' => {
+                    break;
+                },
+                '\'', '"', '`' => {
+                    state = .quoted;
+                    unclosed_quote = c;
                 },
                 else => {},
             },
