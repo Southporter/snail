@@ -92,7 +92,7 @@ pub fn run(self: *App) !void {
     try loop.start();
 
     try self.vx.enterAltScreen(self.tty.anyWriter());
-    errdefer self.vx.exitAltScreen(self.tty.anyWriter()) catch {};
+    defer self.vx.exitAltScreen(self.tty.anyWriter()) catch {};
 
     // Query the terminal to detect advanced features, such as kitty keyboard protocol, etc.
     // This will automatically enable the features in the screen you are in, so you will want to
@@ -145,9 +145,6 @@ pub fn update(self: *App, event: Event) !void {
             // There are other matching functions available for specific purposes, as well
             if (key.matches('c', .{ .ctrl = true }) or key.matches('d', .{ .ctrl = true })) {
                 self.should_quit = true;
-                if (self.current_process) |proc| {
-                    proc.destroy(self.allocator);
-                }
                 return;
             }
             if (key.matches('p', .{ .alt = true })) {
