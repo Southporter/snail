@@ -148,6 +148,10 @@ pub fn update(self: *App, event: Event) !void {
                 return;
             }
             if (key.matches('p', .{ .alt = true })) {
+                if (self.mode == .runner) {
+                    self.mode = .basic;
+                    return;
+                }
                 self.mode = .runner;
                 return;
             }
@@ -262,7 +266,37 @@ pub fn draw(self: *App, scratch: []u8) void {
 
 fn exec(self: *App, input: []const u8) !void {
     defer self.allocator.free(input);
+    switch (self.mode) {
+        .runner => {
+            return self.execPassthrough(input);
+        },
+        .basic => {
+            return self.execSimple(input);
+        },
+    }
+}
 
+fn execPassthrough(self: *App, input: []const u8) !void {
+    try self.vx.exitAltScreen(self.tty.anyWriter());
+    var args = std.ArrayList([]const u8).init(self.allocator);
+    var iter = Parser.init(input);
+    var next = iter.next();
+    try args.append(input[next.location.start..next.location.end]);
+    while (next.kind != .end_of_input) : (next = iter.next()) {
+        try args.append(input[next.location.start..next.location.end]);
+    }
+
+
+    var child = std.process.Child.init(args.items, self.allocator);
+    child.expand_arg0 = .expand;
+
+    const res = child.spawnAndWait();
+    log.info("Child finised with {any}", .{res});
+
+    try self.vx.enterAltScreen(self.tty.anyWriter());
+}
+
+fn execSimple(self: *App, input: []const u8) !void {
     log.info("Execing {s}", .{input});
 
     var iter = Parser.init(input);

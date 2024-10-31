@@ -1,6 +1,8 @@
 const std = @import("std");
 const vaxis = @import("vaxis");
+const xev = @import("xev");
 const App = @import("App.zig");
+const Pty = @import("Pty.zig");
 
 pub const panix = vaxis.panix_handler;
 
@@ -21,7 +23,7 @@ pub fn fileLogger(
     args: anytype,
 ) void {
     const scope_prefix = "(" ++ switch (scope) {
-        .app, .process, std.log.default_log_scope => @tagName(scope),
+        .app, .process, std.log.default_log_scope, .pty => @tagName(scope),
         else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
             @tagName(scope)
         else
@@ -49,12 +51,117 @@ pub fn main() !void {
         .truncate = true,
     });
 
-    // Initialize our application
+    try runSimple(allocator);
+    // try runApplication(allocator);
+}
+
+fn runApplication(allocator: std.mem.Allocator) !void {
     var app = try App.init(allocator);
     defer app.deinit();
 
-    // Run the application
-    try app.run();
+    return app.run();
+}
+
+const next_ms: u64 = 8;
+
+fn runSimple(allocator: std.mem.Allocator) !void {
+    var pool = xev.ThreadPool.init(.{});
+    var loop = try xev.Loop.init(.{
+        .thread_pool = &pool,
+    });
+    defer loop.deinit();
+
+    var shell = Shell{
+        .allocator = allocator,
+        .tty = try vaxis.Tty.init(),
+        .pty = try Pty.init(),
+        .vx = try vaxis.init(allocator, .{}),
+        .loop = &loop,
+    };
+    defer shell.deinit();
+
+    try shell.run();
+}
+
+const Shell = struct {
+    allocator: std.mem.Allocator,
+    pty: Pty,
+    tty: vaxis.Tty,
+    vx: vaxis.Vaxis,
+    loop: *xev.Loop,
+
+    mode: Mode = .passthrough,
+
+    pub const Mode = enum {
+        passthrough,
+        command,
+    };
+
+    fn deinit(self: *Shell) void {
+        self.pty.deinit();
+        self.tty.deinit();
+        self.vx.deinit(self.allocator, self.tty.anyWriter());
+    }
+
+    fn run(self: *Shell) !void {
+
+        const timer = try xev.Timer.init();
+        var timer_cmp: xev.Completion = .{};
+        timer.run(self.loop, &timer_cmp, next_ms, Shell, self, timerCallback);
+
+        var watcher: TtyWatcher(Shell) = undefined;
+        try watcher.init(&self.tty, &self.vx, self.loop, self, eventCallback);
+
+        try self.loop.run(.until_done);
+    }
+};
+
+
+
+fn eventCallback(
+    ud: ?*Shell,
+    loop: *xev.Loop,
+    watcher: *vaxis.xev.TtyWatcher(Shell),
+    event: vaxis.xev.Event,
+) xev.CallbackAction {
+    const shell = ud orelse unreachable;
+    switch (event) {
+        .key_press => |key| {
+            if (key.matches('c', .{ .ctrl = true })) {
+                loop.stop();
+                return .disarm;
+            }
+        },
+        .winsize => |ws| {
+            watcher.vx.resize(shell.allocator, watcher.tty.anyWriter(), ws) catch @panic("TODO");
+            shell.pty.setSize(ws) catch @panic("TODO");
+        },
+        .raw => |raw| {
+            if (shell.mode == .passthrough) {
+                std.posix.write(shell.pty.tty, raw) catch @panic("TODO");
+            }
+        },
+        else => {},
+    }
+    return .rearm;
+}
+
+fn timerCallback(
+    ud: ?*Shell,
+    l: *xev.Loop,
+    c: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch @panic("timer error");
+
+    var shell = ud orelse return .disarm;
+    _ = shell.tty.write(" |tick| ") catch @panic("could not write a tick");
+
+
+    const timer = try xev.Timer.init();
+    timer.run(l, c, next_ms, Shell, ud, timerCallback);
+
+    return .disarm;
 }
 
 test "Snail tests" {
