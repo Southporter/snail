@@ -2,7 +2,11 @@ const std = @import("std");
 const vaxis = @import("vaxis");
 const xev = @import("xev");
 const App = @import("App.zig");
-const Pty = @import("Pty.zig");
+const Pty = @import("pty.zig").Pty;
+const watch = @import("TtyWatcher.zig");
+const Executor = @import("Executor.zig");
+
+const log = std.log.scoped(.main);
 
 pub const panix = vaxis.panix_handler;
 
@@ -23,7 +27,7 @@ pub fn fileLogger(
     args: anytype,
 ) void {
     const scope_prefix = "(" ++ switch (scope) {
-        .app, .process, std.log.default_log_scope, .pty => @tagName(scope),
+        .main, .app, .process, std.log.default_log_scope, .pty, .executor => @tagName(scope),
         else => if (@intFromEnum(level) <= @intFromEnum(std.log.Level.err))
             @tagName(scope)
         else
@@ -74,7 +78,7 @@ fn runSimple(allocator: std.mem.Allocator) !void {
     var shell = Shell{
         .allocator = allocator,
         .tty = try vaxis.Tty.init(),
-        .pty = try Pty.init(),
+        .executor = undefined,
         .vx = try vaxis.init(allocator, .{}),
         .loop = &loop,
     };
@@ -85,7 +89,7 @@ fn runSimple(allocator: std.mem.Allocator) !void {
 
 const Shell = struct {
     allocator: std.mem.Allocator,
-    pty: Pty,
+    executor: Executor,
     tty: vaxis.Tty,
     vx: vaxis.Vaxis,
     loop: *xev.Loop,
@@ -98,31 +102,39 @@ const Shell = struct {
     };
 
     fn deinit(self: *Shell) void {
-        self.pty.deinit();
+        self.executor.pty.deinit();
         self.tty.deinit();
         self.vx.deinit(self.allocator, self.tty.anyWriter());
     }
 
     fn run(self: *Shell) !void {
-
         const timer = try xev.Timer.init();
         var timer_cmp: xev.Completion = .{};
         timer.run(self.loop, &timer_cmp, next_ms, Shell, self, timerCallback);
 
-        var watcher: TtyWatcher(Shell) = undefined;
+        var watcher: watch.TtyWatcher(Shell) = undefined;
         try watcher.init(&self.tty, &self.vx, self.loop, self, eventCallback);
+
+        const winsize = try vaxis.Tty.getWinsize(self.tty.fd);
+        self.executor.pty = try Pty.open(.{
+            .row = @truncate(winsize.rows),
+            .col = @truncate(winsize.cols),
+            .xpixel = @truncate(winsize.x_pixel),
+            .ypixel = @truncate(winsize.y_pixel),
+        });
+        try self.executor.start(self.allocator);
+        try self.executor.watch(self.loop);
+        try self.executor.send("ping");
 
         try self.loop.run(.until_done);
     }
 };
 
-
-
 fn eventCallback(
     ud: ?*Shell,
     loop: *xev.Loop,
-    watcher: *vaxis.xev.TtyWatcher(Shell),
-    event: vaxis.xev.Event,
+    watcher: *watch.TtyWatcher(Shell),
+    event: watch.Event,
 ) xev.CallbackAction {
     const shell = ud orelse unreachable;
     switch (event) {
@@ -134,11 +146,16 @@ fn eventCallback(
         },
         .winsize => |ws| {
             watcher.vx.resize(shell.allocator, watcher.tty.anyWriter(), ws) catch @panic("TODO");
-            shell.pty.setSize(ws) catch @panic("TODO");
+            shell.executor.pty.setSize(.{
+                .row = @truncate(ws.rows),
+                .col = @truncate(ws.cols),
+                .xpixel = @truncate(ws.x_pixel),
+                .ypixel = @truncate(ws.y_pixel),
+            }) catch @panic("TODO");
         },
         .raw => |raw| {
             if (shell.mode == .passthrough) {
-                std.posix.write(shell.pty.tty, raw) catch @panic("TODO");
+                shell.executor.send(raw) catch @panic("Unable to send to worker");
             }
         },
         else => {},
@@ -154,9 +171,9 @@ fn timerCallback(
 ) xev.CallbackAction {
     _ = r catch @panic("timer error");
 
-    var shell = ud orelse return .disarm;
-    _ = shell.tty.write(" |tick| ") catch @panic("could not write a tick");
-
+    _ = ud orelse return .disarm;
+    // _ = shell.tty.write(" |tick| ") catch @panic("could not write a tick");
+    log.debug(" |tick| ", .{});
 
     const timer = try xev.Timer.init();
     timer.run(l, c, next_ms, Shell, ud, timerCallback);

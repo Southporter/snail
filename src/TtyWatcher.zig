@@ -55,7 +55,7 @@ pub fn TtyWatcher(comptime Userdata: type) type {
         pub fn init(
             self: *Self,
             tty: *Tty,
-            vaxis: *Vaxis,
+            vx: *Vaxis,
             loop: *xev.Loop,
             userdata: ?*Userdata,
             callback: *const fn (
@@ -77,8 +77,8 @@ pub fn TtyWatcher(comptime Userdata: type) type {
 
                 .callback = callback,
                 .ud = userdata,
-                .vx = vaxis,
-                .parser = .{ .grapheme_data = &vaxis.unicode.width_data.g_data },
+                .vx = vx,
+                .parser = .{ .grapheme_data = &vx.unicode.width_data.g_data },
             };
 
             self.file.read(
@@ -181,8 +181,8 @@ pub fn TtyWatcher(comptime Userdata: type) type {
                 };
 
                 if (event) |ev| {
-                    const action = self.callback(self.ud, loop, self, ev);
-                    switch (action) {
+                    const event_action = self.callback(self.ud, loop, self, ev);
+                    switch (event_action) {
                         .disarm => return .disarm,
                         else => continue :parse_loop,
                     }
